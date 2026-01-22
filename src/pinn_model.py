@@ -35,6 +35,7 @@ class PINN(nn.Module):
         output_dim: int,
         hidden_layers: List[int],
         activation: str = "tanh",
+        init_type: str = "xavier",
         use_batch_norm: bool = False,
         dropout_rate: float = 0.0,
         seed: Optional[int] = None,
@@ -47,6 +48,7 @@ class PINN(nn.Module):
             output_dim: Dimension of output (e.g., 1 for scalar field u(x,t))
             hidden_layers: List of hidden layer sizes
             activation: Activation function ('tanh', 'relu', 'sigmoid', 'sin')
+            init_type: Weight initialization ('xavier', 'kaiming', 'orthogonal')
             use_batch_norm: Whether to use batch normalization
             dropout_rate: Dropout rate for regularization
             seed: Random seed for reproducibility
@@ -62,6 +64,7 @@ class PINN(nn.Module):
         self.hidden_layers = hidden_layers
         self.use_batch_norm = use_batch_norm
         self.dropout_rate = dropout_rate
+        self.init_type = init_type
 
         # Select activation function
         self.activation_name = activation
@@ -148,10 +151,16 @@ class PINN(nn.Module):
         return nn.Sequential(OrderedDict(layers))
 
     def _initialize_weights(self):
-        """Initialize network weights using Xavier initialization"""
+        """Initialize network weights using selected strategy"""
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_normal_(m.weight)
+                if self.init_type == "xavier":
+                    nn.init.xavier_normal_(m.weight)
+                elif self.init_type == "kaiming":
+                    nn.init.kaiming_normal_(m.weight, nonlinearity="relu" if self.activation_name == "relu" else "tanh")
+                elif self.init_type == "orthogonal":
+                    nn.init.orthogonal_(m.weight)
+                
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm1d):
