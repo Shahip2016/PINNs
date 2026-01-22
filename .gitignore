@@ -175,20 +175,20 @@ ehthumbs.db
 # *.h5
 # *.hdf5
 
-# Model checkpoints (optional - uncomment if needed)
-# checkpoints/
-# *.pth
-# *.pkl
-# *.ckpt
+# Model checkpoints
+checkpoints/
+*.pth
+*.pkl
+*.ckpt
 
-# Plots and figures (optional - uncomment if you generate many plots)
-# figures/
-# plots/
-# *.png
-# *.jpg
-# *.jpeg
-# *.gif
-# *.svg
+# Plots and figures
+figures/
+plots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
 
 # Temporary files
 *.tmp
