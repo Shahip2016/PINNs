@@ -12,6 +12,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import grad
 
+# Use torch.func for advanced AD if available (PyTorch 2.0+)
+try:
+    import torch.func
+    HAS_TORCH_FUNC = True
+except ImportError:
+    HAS_TORCH_FUNC = False
+
 
 class PINN(nn.Module):
     """
@@ -63,6 +70,10 @@ class PINN(nn.Module):
         # Build the network
         self.network = self._build_network()
 
+        # Device handling
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+        self.to(self.device)
+
         # Initialize weights using Xavier/Glorot initialization
         self._initialize_weights()
 
@@ -74,6 +85,15 @@ class PINN(nn.Module):
             "boundary": [],
             "initial": [],
         }
+
+    def compile(self, **kwargs):
+        """Compile the underlying network using torch.compile"""
+        if hasattr(torch, "compile"):
+            self.network = torch.compile(self.network, **kwargs)
+            return self
+        else:
+            print("torch.compile is not available in this version of PyTorch")
+            return self
 
     def _get_activation(self, name: str) -> nn.Module:
         """Get activation function by name"""
@@ -196,14 +216,20 @@ class PINN(nn.Module):
         Returns:
             Physics loss (mean squared PDE residual)
         """
-        # Ensure gradients are tracked
-        x.requires_grad = True
-
-        # Forward pass
-        u = self.forward(x)
-
-        # Compute PDE residual
-        residual = pde_func(x, u, self, **pde_params)
+        # Ensure points are on the correct device
+        x = x.to(self.device)
+        
+        if HAS_TORCH_FUNC:
+            # When using torch.func, we pass a functional version of the model
+            def functional_u(x_in):
+                return self.forward(x_in)
+            
+            residual = pde_func(x, functional_u, self, **pde_params)
+        else:
+            # Fallback to standard autograd
+            x.requires_grad = True
+            u = self.forward(x)
+            residual = pde_func(x, u, self, **pde_params)
 
         # Mean squared error of residual
         loss = torch.mean(residual**2)

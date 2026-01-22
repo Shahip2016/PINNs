@@ -13,87 +13,67 @@ from matplotlib import cm
 from mpl_toolkits.mplot3d import Axes3D
 
 # Set style for better plots
-plt.style.use("seaborn-v0_8-darkgrid")
-sns.set_palette("husl")
+plt.style.use("default")
+sns.set_theme(style="whitegrid", palette="muted")
 
 
 class PDEOperators:
-    """Common PDE operators using automatic differentiation"""
+    """Common PDE operators using torch.func for high-performance automatic differentiation"""
 
     @staticmethod
-    def gradient(u: torch.Tensor, x: torch.Tensor, order: int = 1) -> torch.Tensor:
+    def gradient(u_func: Callable, x: torch.Tensor) -> torch.Tensor:
         """
-        Compute gradient of u with respect to x
+        Compute gradient of u with respect to x using torch.func.jacrev
 
         Args:
-            u: Output tensor from network
-            x: Input tensor (must have requires_grad=True)
-            order: Order of derivative
+            u_func: Function that takes x and returns u
+            x: Input tensor
 
         Returns:
-            Gradient tensor
+            Gradient tensor of same shape as x
         """
-        grad_u = u
-        for _ in range(order):
-            grad_u = torch.autograd.grad(
-                outputs=grad_u,
-                inputs=x,
-                grad_outputs=torch.ones_like(grad_u),
-                retain_graph=True,
-                create_graph=True,
-            )[0]
-        return grad_u
+        # Batch-compatible gradient using vmap and jacrev
+        grad_func = torch.func.vmap(torch.func.jacrev(u_func))
+        return grad_func(x).squeeze(1)
 
     @staticmethod
-    def laplacian(u: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    def laplacian(u_func: Callable, x: torch.Tensor) -> torch.Tensor:
         """
-        Compute Laplacian (sum of second derivatives)
+        Compute Laplacian (sum of second derivatives) using torch.func.hessian
 
         Args:
-            u: Output tensor from network
-            x: Input tensor of spatial coordinates
+            u_func: Function that takes x and returns u
+            x: Input tensor
 
         Returns:
             Laplacian of u
         """
-        grad_u = PDEOperators.gradient(u, x, order=1)
-
-        laplacian = torch.zeros_like(u)
-        for i in range(x.shape[1]):
-            grad_u_i = grad_u[:, i : i + 1]
-            grad2_u_i = torch.autograd.grad(
-                outputs=grad_u_i,
-                inputs=x,
-                grad_outputs=torch.ones_like(grad_u_i),
-                retain_graph=True,
-                create_graph=True,
-            )[0][:, i : i + 1]
-            laplacian += grad2_u_i
-
+        # Batch-compatible hessian
+        hess_func = torch.func.vmap(torch.func.hessian(u_func))
+        hessians = hess_func(x).squeeze(1).squeeze(2)
+        
+        # Laplacian is the trace of the Hessian (sum of diagonal elements)
+        laplacian = torch.diagonal(hessians, dim1=-2, dim2=-1).sum(-1, keepdim=True)
         return laplacian
 
     @staticmethod
-    def divergence(v: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    def divergence(v_func: Callable, x: torch.Tensor) -> torch.Tensor:
         """
-        Compute divergence of vector field v
+        Compute divergence of vector field v using torch.func.jacrev
 
         Args:
-            v: Vector field tensor
+            v_func: Function that takes x and returns vector v
             x: Spatial coordinates
 
         Returns:
             Divergence of v
         """
-        div = torch.zeros_like(v[:, 0:1])
-        for i in range(v.shape[1]):
-            grad_v_i = torch.autograd.grad(
-                outputs=v[:, i],
-                inputs=x,
-                grad_outputs=torch.ones_like(v[:, i]),
-                retain_graph=True,
-                create_graph=True,
-            )[0][:, i : i + 1]
-            div += grad_v_i
+        # Batch-compatible jacobian
+        jac_func = torch.func.vmap(torch.func.jacrev(v_func))
+        jacobians = jac_func(x).squeeze(1) # shape: (batch, v_dim, x_dim)
+        
+        # Divergence is the trace of the Jacobian
+        div = torch.diagonal(jacobians, dim1=-2, dim2=-1).sum(-1, keepdim=True)
         return div
 
 
@@ -475,56 +455,55 @@ class Visualizer:
 class PDELibrary:
     """Library of common PDE definitions for testing"""
 
-    @staticmethod
     def heat_equation_1d(
-        x: torch.Tensor, u: torch.Tensor, model, alpha: float = 0.01
+        x: torch.Tensor, u: Callable, model, alpha: float = 0.01
     ) -> torch.Tensor:
         """
         1D Heat equation: u_t = alpha * u_xx
 
         Args:
             x: Input tensor [x, t]
-            u: Output from network
-            model: PINN model (for gradient computation)
+            u: Functional version of the network
+            model: PINN model
             alpha: Thermal diffusivity
 
         Returns:
             PDE residual
         """
-        # Split inputs
-        x_coord = x[:, 0:1]
-        t_coord = x[:, 1:2]
-
-        # Compute derivatives
-        u_x = PDEOperators.gradient(u, x)[:, 0:1]
-        u_xx = PDEOperators.gradient(u_x, x)[:, 0:1]
-        u_t = PDEOperators.gradient(u, x)[:, 1:2]
-
+        # Compute derivatives using functional API
+        du = PDEOperators.gradient(u, x)
+        u_x = du[:, 0:1]
+        u_t = du[:, 1:2]
+        
+        # Second derivative
+        u_xx = PDEOperators.laplacian(u, x)
+        
         # PDE residual
         residual = u_t - alpha * u_xx
         return residual
 
     @staticmethod
     def wave_equation_1d(
-        x: torch.Tensor, u: torch.Tensor, model, c: float = 1.0
+        x: torch.Tensor, u: Callable, model, c: float = 1.0
     ) -> torch.Tensor:
         """
         1D Wave equation: u_tt = c^2 * u_xx
 
         Args:
             x: Input tensor [x, t]
-            u: Output from network
+            u: Functional model
             model: PINN model
             c: Wave speed
 
         Returns:
             PDE residual
         """
-        # Compute derivatives
-        u_x = PDEOperators.gradient(u, x)[:, 0:1]
-        u_xx = PDEOperators.gradient(u_x, x)[:, 0:1]
-        u_t = PDEOperators.gradient(u, x)[:, 1:2]
-        u_tt = PDEOperators.gradient(u_t, x)[:, 1:2]
+        # For second order time derivative, we still need gradients
+        def du_dt(xi):
+            return torch.func.jacrev(u)(xi).squeeze(0)[1]
+            
+        u_tt = torch.func.vmap(torch.func.jacrev(du_dt))(x).squeeze(1)[:, 1:2]
+        u_xx = PDEOperators.laplacian(u, x)
 
         # PDE residual
         residual = u_tt - c**2 * u_xx
@@ -532,27 +511,21 @@ class PDELibrary:
 
     @staticmethod
     def burgers_equation_1d(
-        x: torch.Tensor, u: torch.Tensor, model, nu: float = 0.01
+        x: torch.Tensor, u: Callable, model, nu: float = 0.01
     ) -> torch.Tensor:
         """
         1D Burgers' equation: u_t + u * u_x = nu * u_xx
-
-        Args:
-            x: Input tensor [x, t]
-            u: Output from network
-            model: PINN model
-            nu: Viscosity coefficient
-
-        Returns:
-            PDE residual
         """
-        # Compute derivatives
-        u_x = PDEOperators.gradient(u, x)[:, 0:1]
-        u_xx = PDEOperators.gradient(u_x, x)[:, 0:1]
-        u_t = PDEOperators.gradient(u, x)[:, 1:2]
+        u_val = u(x) if not isinstance(u(x), torch.Tensor) else u(x) # Handle vmap output
+        du = PDEOperators.gradient(u, x)
+        u_x = du[:, 0:1]
+        u_t = du[:, 1:2]
+        u_xx = PDEOperators.laplacian(u, x)
 
         # PDE residual
-        residual = u_t + u * u_x - nu * u_xx
+        # Re-computing u at x for the non-linear term
+        u_pred = torch.func.vmap(u)(x)
+        residual = u_t + u_pred * u_x - nu * u_xx
         return residual
 
     @staticmethod
