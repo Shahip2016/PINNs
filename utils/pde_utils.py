@@ -407,27 +407,27 @@ class Visualizer:
 
     @staticmethod
     def plot_error_distribution(
-        x: np.ndarray, error: np.ndarray, title: str = "Error Distribution"
+        x: np.ndarray, error: np.ndarray, title: str = "Error Distribution", save_path: Optional[str] = None
     ):
         """Plot error distribution in space"""
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
         # Spatial error distribution
         if x.shape[1] == 1:  # 1D
             axes[0].plot(x, np.abs(error), "r-", linewidth=2)
             axes[0].set_xlabel("x")
             axes[0].set_ylabel("|Error|")
-            axes[0].set_title(f"{title} - Spatial Distribution")
-            axes[0].grid(True, alpha=0.3)
         else:  # 2D or higher
-            scatter = axes[0].scatter(x[:, 0], x[:, 1], c=np.abs(error), cmap="hot")
+            scatter = axes[0].scatter(x[:, 0], x[:, 1], c=np.abs(error), cmap="magma")
+            plt.colorbar(scatter, ax=axes[0])
             axes[0].set_xlabel("x")
             axes[0].set_ylabel("y")
-            axes[0].set_title(f"{title} - Spatial Distribution")
-            plt.colorbar(scatter, ax=axes[0])
+        
+        axes[0].set_title(f"{title} - Spatial Distribution")
+        axes[0].grid(True, alpha=0.3)
 
         # Error histogram
-        axes[1].hist(error.ravel(), bins=50, density=True, alpha=0.7, edgecolor="black")
+        sns.histplot(error.ravel(), bins=50, kde=True, ax=axes[1], color="teal")
         axes[1].set_xlabel("Error")
         axes[1].set_ylabel("Density")
         axes[1].set_title(f"{title} - Histogram")
@@ -436,19 +436,12 @@ class Visualizer:
         # Add statistics
         mean_error = np.mean(error)
         std_error = np.std(error)
-        axes[1].axvline(
-            mean_error, color="red", linestyle="--", label=f"Mean: {mean_error:.2e}"
-        )
-        axes[1].axvline(
-            mean_error + std_error,
-            color="orange",
-            linestyle="--",
-            label=f"Std: {std_error:.2e}",
-        )
-        axes[1].axvline(mean_error - std_error, color="orange", linestyle="--")
+        axes[1].axvline(mean_error, color="red", linestyle="--", label=f"Mean: {mean_error:.2e}")
         axes[1].legend()
 
         plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300)
         plt.show()
 
 
